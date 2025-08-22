@@ -15,7 +15,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
-BOT_TOKEN = "8412311785:AAG6KVmXrYZD8uFZPXg76jHJshn_MDDsEGQ"
+BOT_TOKEN = "YourTelegramBotToken"
 API_BASE_URL = "http://127.0.0.1:8000"
 
 # Trading pairs and timeframes
