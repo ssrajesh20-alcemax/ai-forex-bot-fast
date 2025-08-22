@@ -12,7 +12,7 @@ def tf_to_interval(tf: str) -> str:
     if tf == "15m":
         return "15m"
     if tf == "4h":
-        return "60m" # will resample to 4H
+        return "60m"  # will resample to 4H
     raise ValueError("Unsupported timeframe (use 5m, 15m, 4h)")
 
 def symbol_to_yf(pair: str) -> str:
@@ -70,18 +70,39 @@ def bollinger(series: pd.Series, window=20, num_std=2):
 def detect_double_top_bottom(df: pd.DataFrame, lookback: int = 30, tol: float = 0.0005):
     if len(df) < lookback:
         return None
+
     recent = df.tail(lookback)
+
+    # Ensure Series, not DataFrame
     highs = recent["High"]
     lows = recent["Low"]
+    if isinstance(highs, pd.DataFrame):
+        highs = highs.iloc[:, 0]
+    if isinstance(lows, pd.DataFrame):
+        lows = lows.iloc[:, 0]
+
+    # Convert to float just in case
+    highs = highs.astype(float)
+    lows = lows.astype(float)
+
     top_level = highs.nlargest(2)
     bottom_level = lows.nsmallest(2)
+
     pattern = None
-    ref = recent["Close"].iloc[-1]
-    if len(top_level) >= 2 and abs(top_level.iloc[0] - top_level.iloc[1]) <= tol * ref:
-        pattern = "double_top"
-    if len(bottom_level) >= 2 and abs(bottom_level.iloc[0] - bottom_level.iloc[1]) <= tol * ref:
-        pattern = "double_bottom"
+    ref = float(recent["Close"].iloc[-1])
+
+    if len(top_level) >= 2:
+        diff_top = float(top_level.iloc[0]) - float(top_level.iloc[1])
+        if abs(diff_top) <= tol * ref:
+            pattern = "double_top"
+
+    if len(bottom_level) >= 2:
+        diff_bottom = float(bottom_level.iloc[0]) - float(bottom_level.iloc[1])
+        if abs(diff_bottom) <= tol * ref:
+            pattern = "double_bottom"
+
     return pattern
+
 
 def detect_breakout(df: pd.DataFrame, window: int = 20):
     if len(df) < window + 1:
@@ -89,11 +110,17 @@ def detect_breakout(df: pd.DataFrame, window: int = 20):
     recent = df.tail(window + 1)
     prior = recent.iloc[:-1]
     last = recent.iloc[-1]
-    if last["Close"] > prior["High"].max():
+
+    last_close = float(last["Close"])
+    prior_high = float(prior["High"].max())
+    prior_low = float(prior["Low"].min())
+
+    if last_close > prior_high:
         return "bull_breakout"
-    if last["Close"] < prior["Low"].min():
+    if last_close < prior_low:
         return "bear_breakout"
     return None
+
 
 def score_signal(df: pd.DataFrame):
     close = df["Close"]
@@ -170,7 +197,7 @@ def score_signal(df: pd.DataFrame):
         direction=direction,
         reasons=reasons
     )
-    
+
 def sl_tp_from_atr(entry: float, direction: str, atr_val: float, sl_mult: float, tp_mult: float, pv: float):
     if direction == "BUY":
         sl = entry - sl_mult * atr_val
@@ -187,7 +214,7 @@ def sl_tp_from_atr(entry: float, direction: str, atr_val: float, sl_mult: float,
 
     rr = tp_pips / sl_pips if sl_pips > 0 else 0.0
     return round(sl, 5), round(tp, 5), float(sl_pips), float(tp_pips), float(rr)
-    
+
 def analyze_pair_tf(pair: str, tf: str, cfg: dict) -> dict:
     lookback = "14d" if tf.lower() != "4h" else "90d"
     df = fetch_bars(pair, tf, lookback=lookback)
@@ -228,7 +255,7 @@ def analyze_pair_tf(pair: str, tf: str, cfg: dict) -> dict:
         "confidence": round(conf, 1),
         "reasons": res["reasons"]
     }
-    
+
 def analyze(pairs: list, tf: str, cfg: dict) -> list:
     results = []
     for p in pairs:
