@@ -42,198 +42,86 @@ def rsi(series: pd.Series, period: int = 14) -> pd.Series:
     rs = gain / loss.replace(0, np.nan)
     return 100 - (100 / (1 + rs))
 
-def ema(series: pd.Series, span: int) -> pd.Series:
-    return series.ewm(span=span, adjust=False).mean()
-
-def macd(series: pd.Series, fast=12, slow=26, signal=9):
-    exp1 = series.ewm(span=fast, adjust=False).mean()
-    exp2 = series.ewm(span=slow, adjust=False).mean()
-    macd_line = exp1 - exp2
-    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-    hist = macd_line - signal_line
-    return macd_line, signal_line, hist
-
 def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     high_low = df["High"] - df["Low"]
-    high_close = (df["High"] - df["Close"].shift()).abs()
-    low_close = (df["Low"] - df["Close"].shift()).abs()
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    return tr.rolling(period).mean()
+    high_close = np.abs(df["High"] - df["Close"].shift())
+    low_close = np.abs(df["Low"] - df["Close"].shift())
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = np.max(ranges, axis=1)
+    return true_range.rolling(period).mean()
 
-def bollinger(series: pd.Series, window=20, num_std=2):
-    ma = series.rolling(window).mean()
-    std = series.rolling(window).std()
-    upper = ma + num_std * std
-    lower = ma - num_std * std
-    return ma, upper, lower
-
-def detect_double_top_bottom(df: pd.DataFrame, lookback: int = 30, tol: float = 0.0005):
-    if len(df) < lookback:
-        return None
-
-    recent = df.tail(lookback)
-
-    # Ensure Series, not DataFrame
-    highs = recent["High"]
-    lows = recent["Low"]
-    if isinstance(highs, pd.DataFrame):
-        highs = highs.iloc[:, 0]
-    if isinstance(lows, pd.DataFrame):
-        lows = lows.iloc[:, 0]
-
-    # Convert to float just in case
-    highs = highs.astype(float)
-    lows = lows.astype(float)
-
-    top_level = highs.nlargest(2)
-    bottom_level = lows.nsmallest(2)
-
-    pattern = None
-    ref = float(recent["Close"].iloc[-1])
-
-    if len(top_level) >= 2:
-        diff_top = float(top_level.iloc[0]) - float(top_level.iloc[1])
-        if abs(diff_top) <= tol * ref:
-            pattern = "double_top"
-
-    if len(bottom_level) >= 2:
-        diff_bottom = float(bottom_level.iloc[0]) - float(bottom_level.iloc[1])
-        if abs(diff_bottom) <= tol * ref:
-            pattern = "double_bottom"
-
-    return pattern
-
-
-def detect_breakout(df: pd.DataFrame, window: int = 20):
-    if len(df) < window + 1:
-        return None
-    recent = df.tail(window + 1)
-    prior = recent.iloc[:-1]
-    last = recent.iloc[-1]
-
-    last_close = float(last["Close"])
-    prior_high = float(prior["High"].max())
-    prior_low = float(prior["Low"].min())
-
-    if last_close > prior_high:
-        return "bull_breakout"
-    if last_close < prior_low:
-        return "bear_breakout"
-    return None
-
-
-def score_signal(df: pd.DataFrame):
+def score_signal(df: pd.DataFrame) -> dict:
     close = df["Close"]
-    rsi14 = rsi(close, 14)
-    macd_line, signal_line, _ = macd(close)
-    ema20 = ema(close, 20)
-    ema50 = ema(close, 50)
-    ema200 = ema(close, 200)
-    atr14 = atr(df, 14)
-    _, bb_up, bb_low = bollinger(close, 20, 2)
-
-    price = float(close.iloc[-1])
-    _rsi = float(rsi14.iloc[-1])
-    _macd = float(macd_line.iloc[-1])
-    _signal = float(signal_line.iloc[-1])
-    _ema20 = float(ema20.iloc[-1])
-    _ema50 = float(ema50.iloc[-1])
-    _ema200 = float(ema200.iloc[-1])
-    _atr = float(atr14.iloc[-1])
-    _bb_up = float(bb_up.iloc[-1])
-    _bb_low = float(bb_low.iloc[-1])
-
-    score = 0.0
+    rsi_val = rsi(close).iloc[-1]
+    sma_20 = close.rolling(20).mean().iloc[-1]
+    sma_50 = close.rolling(50).mean().iloc[-1]
+    current_price = close.iloc[-1]
+    atr_val = atr(df).iloc[-1]
+    
+    score = 0
     reasons = []
-
-    if _rsi < 30:
-        score += 1; reasons.append(f"RSI oversold ({_rsi:.1f})")
-    elif _rsi > 70:
-        score -= 1; reasons.append(f"RSI overbought ({_rsi:.1f})")
-
-    if _macd > _signal:
-        score += 1; reasons.append("MACD > Signal")
-    else:
-        score -= 1; reasons.append("MACD < Signal")
-
-    if price > _ema20 > _ema50 > _ema200:
-        score += 1; reasons.append("EMA20>50>200 uptrend")
-    elif price < _ema20 < _ema50 < _ema200:
-        score -= 1; reasons.append("EMA20<50<200 downtrend")
-
-    if price <= _bb_low:
-        score += 0.5; reasons.append("Near/Below lower Bollinger")
-    elif price >= _bb_up:
-        score -= 0.5; reasons.append("Near/Above upper Bollinger")
-
-    patt = detect_double_top_bottom(df)
-    if patt == "double_bottom":
-        score += 1; reasons.append("Double bottom")
-    elif patt == "double_top":
-        score -= 1; reasons.append("Double top")
-
-    brk = detect_breakout(df)
-    if brk == "bull_breakout":
-        score += 1; reasons.append("Bullish breakout")
-    elif brk == "bear_breakout":
-        score -= 1; reasons.append("Bearish breakout")
-
-    direction = "HOLD"
+    
+    # RSI signals
+    if rsi_val < 30:
+        score += 2
+        reasons.append("RSI oversold")
+    elif rsi_val > 70:
+        score -= 2
+        reasons.append("RSI overbought")
+    
+    # Moving average signals
+    if current_price > sma_20 > sma_50:
+        score += 1
+        reasons.append("Bullish MA alignment")
+    elif current_price < sma_20 < sma_50:
+        score -= 1
+        reasons.append("Bearish MA alignment")
+    
+    # Determine direction based on score
     if score >= 2:
         direction = "BUY"
     elif score <= -2:
         direction = "SELL"
-
-    return dict(
-        price=price,
-        rsi=_rsi,
-        macd=_macd,
-        macd_signal=_signal,
-        ema20=_ema20,
-        ema50=_ema50,
-        ema200=_ema200,
-        atr=_atr,
-        score=score,
-        direction=direction,
-        reasons=reasons
-    )
-
-def sl_tp_from_atr(entry: float, direction: str, atr_val: float, sl_mult: float, tp_mult: float, pv: float):
-    if direction == "BUY":
-        sl = entry - sl_mult * atr_val
-        tp = entry + tp_mult * atr_val
-        sl_pips = (entry - sl) / pv
-        tp_pips = (tp - entry) / pv
-    elif direction == "SELL":
-        sl = entry + sl_mult * atr_val
-        tp = entry - tp_mult * atr_val
-        sl_pips = (sl - entry) / pv
-        tp_pips = (entry - tp) / pv
     else:
-        return None, None, 0.0, 0.0, 0.0
+        direction = "HOLD"
+    
+    return {
+        "score": score,
+        "direction": direction,
+        "price": current_price,
+        "atr": atr_val,
+        "reasons": reasons
+    }
 
-    rr = tp_pips / sl_pips if sl_pips > 0 else 0.0
-    return round(sl, 5), round(tp, 5), float(sl_pips), float(tp_pips), float(rr)
+def sl_tp_from_atr(entry: float, direction: str, atr_val: float, sl_mult: float, tp_mult: float, pip_value: float) -> tuple:
+    if direction == "BUY":
+        sl = entry - (atr_val * sl_mult)
+        tp = entry + (atr_val * tp_mult)
+    else:  # SELL
+        sl = entry + (atr_val * sl_mult)
+        tp = entry - (atr_val * tp_mult)
+    
+    sl_pips = abs(entry - sl) / pip_value
+    tp_pips = abs(tp - entry) / pip_value
+    rr = tp_pips / sl_pips if sl_pips > 0 else 0
+    
+    return sl, tp, sl_pips, tp_pips, rr
 
 def analyze_pair_tf(pair: str, tf: str, cfg: dict) -> dict:
     lookback = "14d" if tf.lower() != "4h" else "90d"
     df = fetch_bars(pair, tf, lookback=lookback)
     if df is None or df.empty or len(df) < 60:
         return {"pair": pair, "timeframe": tf, "error": "not_enough_data"}
-
+    
     res = score_signal(df)
     entry = res["price"]
     direction = res["direction"]
     atr_val = res["atr"]
     pv = pip_value(pair)
-
     sl = tp = None
     sl_pips = tp_pips = rr = 0.0
-    if direction in ("BUY", "SELL"):
-        sl, tp, sl_pips, tp_pips, rr = sl_tp_from_atr(
-            entry, direction, atr_val, cfg["risk"]["atr_sl_mult"], cfg["risk"]["atr_tp_mult"], pv
-        )
-
+    
+    # Calculate confidence based on absolute score
     abs_score = abs(res["score"])
     if abs_score <= 1.5:
         conf = 50 + 10 * abs_score
@@ -241,7 +129,45 @@ def analyze_pair_tf(pair: str, tf: str, cfg: dict) -> dict:
         conf = 70 + 15 * (abs_score - 2)
     else:
         conf = min(95, 85 + 5 * (abs_score - 3))
-
+    
+    # STRONG SIGNAL THRESHOLD GUARDS - CRITICAL SAFETY FILTERS
+    # Define minimum thresholds for strong signals
+    MIN_SCORE_THRESHOLD = 2.0  # Minimum absolute score for BUY/SELL
+    MIN_CONFIDENCE_THRESHOLD = 70.0  # Minimum confidence percentage
+    MIN_RR_THRESHOLD = 1.5  # Minimum risk-reward ratio
+    
+    # Calculate risk metrics if we have a potential BUY/SELL signal
+    if direction in ("BUY", "SELL"):
+        sl, tp, sl_pips, tp_pips, rr = sl_tp_from_atr(
+            entry, direction, atr_val, cfg["risk"]["atr_sl_mult"], cfg["risk"]["atr_tp_mult"], pv
+        )
+    
+    # ENFORCE THRESHOLD GUARDS - Override direction if thresholds not met
+    if direction in ("BUY", "SELL"):
+        # Check all three critical thresholds
+        if (abs_score < MIN_SCORE_THRESHOLD or 
+            conf < MIN_CONFIDENCE_THRESHOLD or 
+            rr < MIN_RR_THRESHOLD):
+            
+            # Override to HOLD with clear reason
+            direction = "HOLD"
+            
+            # Add threshold violation reasons
+            threshold_reasons = []
+            if abs_score < MIN_SCORE_THRESHOLD:
+                threshold_reasons.append(f"Score {abs_score:.1f} below threshold {MIN_SCORE_THRESHOLD}")
+            if conf < MIN_CONFIDENCE_THRESHOLD:
+                threshold_reasons.append(f"Confidence {conf:.1f}% below threshold {MIN_CONFIDENCE_THRESHOLD}%")
+            if rr < MIN_RR_THRESHOLD:
+                threshold_reasons.append(f"Risk-reward {rr:.2f} below threshold {MIN_RR_THRESHOLD}")
+            
+            # Update reasons to include threshold failures
+            res["reasons"] = res["reasons"] + ["THRESHOLD GUARD: " + "; ".join(threshold_reasons)]
+    
+    # If signal is still weak after all checks, provide clear feedback
+    if direction == "HOLD" and abs_score < 1.0:
+        direction = "No strong signal"
+    
     return {
         "pair": pair,
         "timeframe": tf,
