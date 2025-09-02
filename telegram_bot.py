@@ -1,6 +1,5 @@
 # Telegram Bot for AI Forex Analysis
 # This bot connects to the localhost:8000 analysis API
-
 import logging
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -39,205 +38,238 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "🚀 **Welcome to AI Forex Bot!** 🚀\n\n"
         "Get professional forex analysis with:\n"
         "📈 Technical indicators (RSI, MACD, EMA)\n"
-        "📊 Pattern recognition (double tops/bottoms)\n" 
+        "📊 Pattern recognition (double tops/bottoms)\n"
         "🎯 Calculated Stop Loss & Take Profit\n"
         "⚡ Risk/Reward ratios\n\n"
-        "**Step 1:** Choose a trading pair to analyze:"
+        "**Select a trading pair to begin:**"
     )
     
     await update.message.reply_text(
-        welcome_message, 
-        reply_markup=reply_markup, 
+        welcome_message,
+        reply_markup=reply_markup,
         parse_mode='Markdown'
     )
 
 async def pair_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle trading pair selection and show timeframes."""
+    """Handle trading pair selection and show timeframe options."""
     query = update.callback_query
     await query.answer()
     
-    selected_pair = query.data.split("_")[1]
+    # Extract selected pair
+    selected_pair = query.data.replace('pair_', '')
     context.user_data['selected_pair'] = selected_pair
     
-    keyboard = [[InlineKeyboardButton(tf.upper(), callback_data=f"tf_{tf}") for tf in TIMEFRAMES]]
+    # Create timeframe selection keyboard
+    keyboard = []
+    for i in range(0, len(TIMEFRAMES), 3):
+        row = []
+        for j in range(3):
+            if i + j < len(TIMEFRAMES):
+                tf = TIMEFRAMES[i + j]
+                row.append(InlineKeyboardButton(tf, callback_data=f"tf_{tf}"))
+        keyboard.append(row)
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    message = (
-        f"✅ **Selected Pair:** {selected_pair}\n\n"
-        f"**Step 2:** Choose analysis timeframe:"
-    )
-    
     await query.edit_message_text(
-        message, 
-        reply_markup=reply_markup, 
+        f"📊 **{selected_pair}** selected!\n\n"
+        f"📈 Choose your analysis timeframe:",
+        reply_markup=reply_markup,
         parse_mode='Markdown'
     )
 
 async def timeframe_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle timeframe selection and perform analysis."""
+    """Handle timeframe selection and get analysis."""
     query = update.callback_query
     await query.answer()
     
-    selected_tf = query.data.split("_")[1]
+    # Extract selected timeframe
+    selected_timeframe = query.data.replace('tf_', '')
     selected_pair = context.user_data.get('selected_pair')
     
-    # Show processing message
-    processing_msg = (
-        f"🔄 **Analyzing {selected_pair} on {selected_tf.upper()} timeframe**\n\n"
-        f"⏳ Fetching live market data...\n"
-        f"📊 Running technical analysis..."
+    if not selected_pair:
+        await query.edit_message_text(
+            "❌ Error: Trading pair not found. Please restart with /start",
+            parse_mode='Markdown'
+        )
+        return
+    
+    # Show loading message
+    await query.edit_message_text(
+        f"⏳ **Analyzing {selected_pair} on {selected_timeframe} timeframe...**\n\n"
+        f"🔍 Gathering market data...\n"
+        f"📊 Processing technical indicators...\n"
+        f"🧠 Running AI analysis...",
+        parse_mode='Markdown'
     )
     
-    await query.edit_message_text(processing_msg, parse_mode='Markdown')
-    
     try:
-        # Call the analysis API
+        # Make API call to get analysis
         response = requests.get(
-            f"{API_BASE_URL}/analyze",
-            params={'pairs': selected_pair, 'tf': selected_tf},
+            f"{API_BASE_URL}/analyze/{selected_pair}/{selected_timeframe}",
             timeout=30
         )
         
         if response.status_code == 200:
             data = response.json()
-            if data['results'] and len(data['results']) > 0:
-                result = data['results'][0]
-                
-                # Check if there's an error
-                if 'error' in result:
-                    error_msg = (
-                        f"⚠️ **Analysis Issue**\n\n"
-                        f"**Pair:** {selected_pair}\n"
-                        f"**Error:** {result['error']}\n\n"
-                        f"This usually means insufficient market data."
-                    )
-                    keyboard = [[InlineKeyboardButton("🔄 Try Another Pair", callback_data="restart")]]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    
-                    await query.edit_message_text(
-                        error_msg,
-                        reply_markup=reply_markup,
-                        parse_mode='Markdown'
-                    )
-                else:
-                    # Format successful analysis
-                    analysis_message = format_analysis_result(result)
-                    
-                    keyboard = [[InlineKeyboardButton("🔄 New Analysis", callback_data="restart")]]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    
-                    await query.edit_message_text(
-                        analysis_message,
-                        reply_markup=reply_markup,
-                        parse_mode='Markdown'
-                    )
-            else:
-                raise Exception("No results returned from API")
-                
-        else:
-            raise Exception(f"API returned status {response.status_code}")
+            analysis_message = format_analysis_response(data)
             
-    except requests.exceptions.Timeout:
-        error_msg = (
-            "⏰ **Request Timeout**\n\n"
-            "The analysis is taking longer than expected.\n"
-            "Please try again or choose a different timeframe."
+            # Create restart button
+            keyboard = [[InlineKeyboardButton("🔄 New Analysis", callback_data="restart")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                analysis_message,
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+        else:
+            error_message = (
+                f"❌ **Analysis Failed**\n\n"
+                f"Status Code: {response.status_code}\n"
+                f"Please ensure the analysis API is running on {API_BASE_URL}"
+            )
+            
+            keyboard = [[InlineKeyboardButton("🔄 Try Again", callback_data="restart")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                error_message,
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+            
+    except requests.exceptions.RequestException as e:
+        error_message = (
+            f"❌ **Connection Error**\n\n"
+            f"Cannot reach analysis API at {API_BASE_URL}\n"
+            f"Error: {str(e)}\n\n"
+            f"Please ensure the API server is running."
         )
+        
         keyboard = [[InlineKeyboardButton("🔄 Try Again", callback_data="restart")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(
-            error_msg,
+            error_message,
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
+
+def format_analysis_response(data):
+    """Format the analysis response for Telegram display."""
+    try:
+        # Basic information
+        pair = data.get('pair', 'N/A')
+        timeframe = data.get('timeframe', 'N/A')
+        current_price = data.get('current_price', 0)
+        timestamp = data.get('timestamp', '')
         
-    except requests.exceptions.ConnectionError:
-        error_msg = (
-            "🔌 **Connection Error**\n\n"
-            "Cannot connect to analysis server.\n"
-            "Make sure the API server is running on localhost:8000"
-        )
-        keyboard = [[InlineKeyboardButton("🔄 Try Again", callback_data="restart")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        # Analysis results
+        analysis = data.get('analysis', {})
+        direction = analysis.get('direction', 'HOLD')
+        confidence = analysis.get('confidence', 0)
         
-        await query.edit_message_text(
-            error_msg,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
+        # Technical indicators
+        indicators = analysis.get('indicators', {})
+        rsi = indicators.get('rsi', {}).get('value', 0)
+        rsi_signal = indicators.get('rsi', {}).get('signal', 'NEUTRAL')
+        
+        macd = indicators.get('macd', {})
+        macd_signal = macd.get('signal', 'NEUTRAL')
+        macd_histogram = macd.get('histogram', 0)
+        
+        ema = indicators.get('ema', {})
+        ema_signal = ema.get('signal', 'NEUTRAL')
+        
+        # Price levels
+        levels = analysis.get('levels', {})
+        support = levels.get('support', current_price)
+        resistance = levels.get('resistance', current_price)
+        
+        # Trade suggestion (if direction is BUY or SELL)
+        trade_info = ""
+        if direction in ['BUY', 'SELL']:
+            entry_price = analysis.get('entry_price', current_price)
+            stop_loss = analysis.get('stop_loss', 0)
+            take_profit = analysis.get('take_profit', 0)
+            risk_reward = analysis.get('risk_reward', 0)
+            
+            trade_info = f"""
+📋 **Trade Setup:**
+🎯 Entry: {entry_price:.5f}
+🛡️ Stop Loss: {stop_loss:.5f}
+💰 Take Profit: {take_profit:.5f}
+⚖️ Risk/Reward: 1:{risk_reward:.1f}
+"""
+        else:
+            # Handle weak signal case - show 'No strong signal' or HOLD with reasons
+            weak_signal_reasons = []
+            
+            # Check confidence level
+            if confidence < 70:
+                weak_signal_reasons.append(f"Low confidence ({confidence}%)")
+            
+            # Check indicator conflicts
+            signals = [rsi_signal, macd_signal, ema_signal]
+            if len(set(signals)) > 1:  # Multiple different signals
+                weak_signal_reasons.append("Mixed indicator signals")
+            
+            # Check if all indicators are neutral
+            if all(signal == 'NEUTRAL' for signal in signals):
+                weak_signal_reasons.append("All indicators neutral")
+            
+            if weak_signal_reasons:
+                direction = "No strong signal"
+                trade_info = f"""
+📋 **Recommendation: HOLD**
+🔍 Reasons:
+{'• ' + chr(10).join(weak_signal_reasons)}
+
+⏳ Wait for clearer market conditions
+"""
+            else:
+                trade_info = f"""
+📋 **Recommendation: HOLD**
+⏳ Current market conditions suggest waiting for better opportunities
+"""
+        
+        # Format the complete message
+        message = f"""
+🎯 **{pair} Analysis - {timeframe}**
+📊 Current Price: {current_price:.5f}
+⏰ {timestamp}
+
+🔍 **Market Direction: {direction}**
+📈 Confidence: {confidence}%
+
+📊 **Technical Indicators:**
+• RSI ({rsi:.1f}): {rsi_signal}
+• MACD: {macd_signal} (Hist: {macd_histogram:.5f})
+• EMA: {ema_signal}
+
+📍 **Key Levels:**
+🔴 Resistance: {resistance:.5f}
+🟢 Support: {support:.5f}
+{trade_info}
+💡 **Note:** This is AI-generated analysis. Always do your own research and manage risk appropriately.
+"""
+        
+        return message
         
     except Exception as e:
-        logger.error(f"Analysis error: {str(e)}")
-        error_msg = (
-            "❌ **Analysis Failed**\n\n"
-            f"**Error:** {str(e)}\n\n"
-            "Please try again or contact support."
-        )
-        keyboard = [[InlineKeyboardButton("🔄 Try Again", callback_data="restart")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.edit_message_text(
-            error_msg,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-
-def format_analysis_result(result):
-    """Format the analysis result for Telegram display."""
-    pair = result.get('pair', 'N/A')
-    direction = result.get('direction', 'HOLD')
-    entry = result.get('entry', 0)
-    confidence = result.get('confidence', 0)
-    
-    # Direction emoji and formatting
-    if direction == 'BUY':
-        direction_emoji = "🟢"
-        signal_text = "**BUY SIGNAL**"
-    elif direction == 'SELL':
-        direction_emoji = "🔴"
-        signal_text = "**SELL SIGNAL**"
-    else:
-        direction_emoji = "🟡"
-        signal_text = "**HOLD POSITION**"
-    
-    # Build the message
-    message = f"{direction_emoji} **FOREX ANALYSIS** {direction_emoji}\n\n"
-    message += f"📈 **Pair:** {pair}\n"
-    message += f"⚡ **Signal:** {signal_text}\n"
-    message += f"💰 **Entry Price:** {entry}\n"
-    message += f"🎯 **Confidence:** {confidence}%\n"
-    
-    # Add risk management info if available
-    if result.get('stop_loss') and result.get('take_profit'):
-        message += f"\n**📊 Risk Management:**\n"
-        message += f"🛑 **Stop Loss:** {result['stop_loss']}\n"
-        message += f"🎯 **Take Profit:** {result['take_profit']}\n"
-        message += f"📏 **SL Distance:** {result.get('sl_pips', 0)} pips\n"
-        message += f"📏 **TP Distance:** {result.get('tp_pips', 0)} pips\n"
-        message += f"⚖️ **Risk:Reward:** 1:{result.get('rr', 0)}\n"
-    
-    # Add technical analysis reasons
-    reasons = result.get('reasons', [])
-    if reasons:
-        message += f"\n**📋 Technical Analysis:**\n"
-        for reason in reasons[:4]:  # Limit to 4 reasons for readability
-            message += f"• {reason}\n"
-    
-    # Add timestamp
-    message += f"\n⏰ **Analysis Time:** {datetime.now().strftime('%H:%M:%S')}"
-    
-    return message
+        logger.error(f"Error formatting analysis response: {e}")
+        return f"❌ Error formatting analysis data: {str(e)}"
 
 async def restart_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Restart the analysis process from the beginning."""
+    """Restart the analysis process."""
     query = update.callback_query
     await query.answer()
     
-    # Clear stored user data
+    # Clear user data
     context.user_data.clear()
     
-    # Simulate the start command by recreating the interface
+    # Show pair selection again
     keyboard = []
     for i in range(0, len(TRADING_PAIRS), 2):
         row = []
@@ -249,13 +281,9 @@ async def restart_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    restart_message = (
-        "🔄 **Starting New Analysis**\n\n"
-        "**Step 1:** Choose a trading pair to analyze:"
-    )
-    
     await query.edit_message_text(
-        restart_message,
+        "🔄 **Starting new analysis...**\n\n"
+        "📈 Select a trading pair:",
         reply_markup=reply_markup,
         parse_mode='Markdown'
     )
